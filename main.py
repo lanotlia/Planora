@@ -55,10 +55,9 @@ async def lifespan(app: FastAPI):
 # ─────────────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="StudyCoach API",
-    description="Personalised study recommendation and check-in system",
-    version="1.0.0",
-    lifespan=lifespan
+    title="Planora API",
+    description="Personalised study coaching for every kind of learner",
+    version="1.0.0"
 )
 
 # Allows the mobile app to call the API without being blocked
