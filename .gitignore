@@ -1,0 +1,16 @@
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+model/artifacts/
+model/training_data.csv
+.vscode/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+*.log
+*.csv
+*.pkl
