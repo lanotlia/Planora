@@ -15,50 +15,48 @@ load_dotenv()
 # ─────────────────────────────────────────────────────────────────────────────
 # STARTUP — train model if artifacts don't exist
 # ─────────────────────────────────────────────────────────────────────────────
+from fastapi import FastAPI
+from pydantic import BaseModel
+from typing import Optional
+from contextlib import asynccontextmanager
+from model.predict import predict
+from chatbot.checkin import CheckInSession
+import gdown
+import os
 
-@asynccontextmanager
+def download_model_artifacts():
+    os.makedirs("model/artifacts", exist_ok=True)
+    
+    files = {
+        "model/artifacts/models.pkl":       "1know7HPwQ_aG6bv6nGeFQPjfXOEFmoIy",
+        "model/artifacts/encoders.pkl":     "1rKLQj2WAJT5KCQvUy74mCSlno7u69CCi",
+        "model/artifacts/feature_cols.json":"1UXyPYz58CiLsZH9dqzcn"
+
+
+    }
+    
+    for path, file_id in files.items():
+        if not os.path.exists(path):
+            print(f"Downloading {path}...")
+            gdown.download(
+                f"https://drive.google.com/uc?id={file_id}",
+                path,
+                quiet=False
+            )
+            print(f"{path} ready.")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not os.path.exists("model/artifacts/models.pkl"):
-        if os.getenv("RENDER"):  # Render automatically sets this variable
-            print("Downloading model artifacts from Google Drive...")
-            os.makedirs("model/artifacts", exist_ok=True)
-            gdown.download(
-                "https://drive.google.com/uc?id=1know7HPwQ_aG6bv6nGeFQPjfXOEFmoIy",
-                "model/artifacts/models.pkl",
-                quiet=False
-            )
-            gdown.download(
-                "https://drive.google.com/uc?id=1rKLQj2WAJT5KCQvUy74mCSlno7u69CCi",
-                "model/artifacts/encoders.pkl",
-                quiet=False
-            )
-            gdown.download(
-                "https://drive.google.com/uc?id=1UXyPYz58CiLsZH9dqzcnTMvDba45nr-d",
-                "model/artifacts/feature_cols.json",
-                quiet=False
-            )
-        else:
-            print("No model artifacts found — training now...")
-            from model.data import generate_dataset
-            from model.train import train
-            generate_dataset(1000)
-            train()
-        print("Model ready.")
-    else:
-        print("Model artifacts found — skipping.")
+    download_model_artifacts()
     yield
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# APP
-# ─────────────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="Planora API",
     description="Personalised study coaching for every kind of learner",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
+
 
 # Allows the mobile app to call the API without being blocked
 app.add_middleware(
