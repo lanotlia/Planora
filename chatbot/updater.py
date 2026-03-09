@@ -6,7 +6,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+def get_client():
+    return genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 def extract_session_signals(checkin_text: str, user_category: str) -> dict:
     """
@@ -48,9 +49,9 @@ def extract_session_signals(checkin_text: str, user_category: str) -> dict:
       feeling overwhelmed, or nervousness about the material or upcoming exams.
     """
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt
+    response = get_client().models.generate_content(
+    model="gemini-2.0-flash",
+    contents=prompt
     )
     raw = response.text.strip()
 
