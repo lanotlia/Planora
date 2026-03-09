@@ -28,7 +28,7 @@ def download_model_artifacts():
     os.makedirs("model/artifacts", exist_ok=True)
     
     files = {
-        "model/artifacts/models.pkl":       "1know7HPwQ_aG6bv6nGeFQPjfXOEFmoIy",
+        "model/artifacts/models.pkl":       "17OQb35a69y8RZ_mUfZLT9oVGzRv5IpAW",
         "model/artifacts/encoders.pkl":     "1rKLQj2WAJT5KCQvUy74mCSlno7u69CCi",
         "model/artifacts/feature_cols.json":"1UXyPYz58CiLsZH9dqzcn"
 
