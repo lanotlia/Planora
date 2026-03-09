@@ -15,14 +15,7 @@ load_dotenv()
 # ─────────────────────────────────────────────────────────────────────────────
 # STARTUP — train model if artifacts don't exist
 # ─────────────────────────────────────────────────────────────────────────────
-from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import Optional
-from contextlib import asynccontextmanager
-from model.predict import predict
-from chatbot.checkin import CheckInSession
-import gdown
-import os
+
 
 def download_model_artifacts():
     os.makedirs("model/artifacts", exist_ok=True)
@@ -54,8 +47,11 @@ app = FastAPI(
     title="Planora API",
     description="Personalised study coaching for every kind of learner",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
+
 
 
 # Allows the mobile app to call the API without being blocked
@@ -138,11 +134,10 @@ class FlashcardRequest(BaseModel):
 @app.get("/")
 async def root():
     return {
-        "status":  "StudyCoach API is running",
+        "status": "Planora API is running",
         "version": "1.0.0",
-        "docs":    "/docs"
+        "docs": "https://planora-backend.onrender.com/docs"
     }
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RECOMMENDATION ENDPOINT
