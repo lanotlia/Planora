@@ -126,7 +126,24 @@ class FlashcardRequest(BaseModel):
     user_category: str
     material:      str           # text to generate flashcards from
 
+from fastapi.responses import HTMLResponse
 
+@app.get("/api-info", response_class=HTMLResponse)
+async def api_info():
+    return """
+    <html>
+        <body>
+            <h1>Planora API</h1>
+            <h2>Endpoints</h2>
+            <ul>
+                <li>POST /recommend</li>
+                <li>POST /checkin/start</li>
+                <li>POST /checkin/message</li>
+                <li>POST /flashcards/generate</li>
+            </ul>
+        </body>
+    </html>
+    """
 # ─────────────────────────────────────────────────────────────────────────────
 # HEALTH CHECK
 # ─────────────────────────────────────────────────────────────────────────────
