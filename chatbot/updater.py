@@ -1,4 +1,4 @@
-import google.generativeai as genai
+from google import genai
 import os
 import json
 from datetime import datetime, timedelta
@@ -6,9 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini = genai.GenerativeModel("gemini-1.5-flash")
-
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 def extract_session_signals(checkin_text: str, user_category: str) -> dict:
     """
@@ -50,7 +48,10 @@ def extract_session_signals(checkin_text: str, user_category: str) -> dict:
       feeling overwhelmed, or nervousness about the material or upcoming exams.
     """
 
-    response = gemini.generate_content(prompt)
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt
+    )
     raw = response.text.strip()
 
     if raw.startswith("```"):
@@ -258,5 +259,8 @@ def _generate_encouragement(
         - Maximum 2 sentences.
         """
 
-    response = gemini.generate_content(prompt)
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt
+    )
     return response.text.strip()
