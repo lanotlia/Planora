@@ -1,10 +1,12 @@
-from google import genai
+import google.generativeai as genai
 import os
 import json
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+gemini = genai.GenerativeModel("gemini-1.5-flash")
 
 def get_client():
     return genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
@@ -260,8 +262,5 @@ def _generate_encouragement(
         - Maximum 2 sentences.
         """
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt
-    )
+    response = gemini.generate_content(prompt)
     return response.text.strip()

@@ -1,12 +1,14 @@
-from google import genai
+import google.generativeai as genai
 import os
 import json
 from dotenv import load_dotenv
+from typer import prompt
 
 load_dotenv()
 
-def get_client():
-    return genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+gemini = genai.GenerativeModel("gemini-1.5-flash")
+
 
 def extract_text_from_material(material: str) -> str:
     """Clean and truncate material to fit context window"""
@@ -231,10 +233,7 @@ def generate_questions(
     {material}
     """
 
-    response = get_client().models.generate_content(
-    model="gemini-2.0-flash",
-    contents=prompt
-    )
+    response = gemini.generate_content(prompt)
     raw = response.text.strip()
 
     # Strip markdown code blocks if Gemini adds them
@@ -366,10 +365,7 @@ def evaluate_answer(
     }}
     """
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt
-    )
+    response = gemini.generate_content(prompt)
     raw = response.text.strip()
 
     if raw.startswith("```"):
