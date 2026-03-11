@@ -163,7 +163,7 @@ async def root():
     return {
         "status": "Planora API is running",
         "version": "1.0.0",
-        "docs": "https://planora-backend.onrender.com/docs"
+        "docs": "https://planora-1-87zb.onrender.com/docs"
     }
 
 @app.get("/ping")

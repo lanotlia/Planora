@@ -157,11 +157,11 @@ TECHNIQUE_INFO = {
 }
 
 def _encode_profile(combined: dict) -> list:
-    """Encode a raw profile dict into the feature vector the model expects"""
     categorical_cols = [
         "attention_span", "learning_style", "peak_focus_time",
         "study_env", "user_category", "struggle",
-        "content_type", "memory_load", "prior_attempt"
+        "content_type", "memory_load", "prior_attempt",
+        "current_level"
     ]
     
     encoded = {}
@@ -171,8 +171,11 @@ def _encode_profile(combined: dict) -> list:
             try:
                 val = encoders[col].transform([val])[0]
             except ValueError:
-                # unseen label — default to 0
+                # unseen label or not_applicable — default to 0
                 val = 0
+        # Handle any remaining string values that slipped through
+        if isinstance(val, str):
+            val = 0
         encoded[col] = val
     
     return [encoded[col] for col in feature_cols]
