@@ -8,7 +8,8 @@ from chatbot.checkin import CheckInSession
 from dotenv import load_dotenv
 import gdown
 import os
-
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import HTMLResponse
 load_dotenv()
 
 
@@ -23,7 +24,7 @@ def download_model_artifacts():
     files = {
         "model/artifacts/models.pkl":       "17OQb35a69y8RZ_mUfZLT9oVGzRv5IpAW",
         "model/artifacts/encoders.pkl":     "1rKLQj2WAJT5KCQvUy74mCSlno7u69CCi",
-        "model/artifacts/feature_cols.json":"1UXyPYz58CiLsZH9dqzcn"
+        "model/artifacts/feature_cols.json":"1qxM29f_35YWCyz7KSpg5VAr1MsrysXpL"
 
 
     }
@@ -48,8 +49,8 @@ app = FastAPI(
     description="Personalised study coaching for every kind of learner",
     version="1.0.0",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url=None,     
+    redoc_url=None
 )
 
 
@@ -126,7 +127,16 @@ class FlashcardRequest(BaseModel):
     user_category: str
     material:      str           # text to generate flashcards from
 
-from fastapi.responses import HTMLResponse
+
+# Serve docs manually
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui():
+    return get_swagger_ui_html(
+        openapi_url="/openapi.json",
+        title="Planora API Docs",
+        swagger_js_url="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js",
+        swagger_css_url="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css",
+    )
 
 @app.get("/api-info", response_class=HTMLResponse)
 async def api_info():
@@ -155,6 +165,10 @@ async def root():
         "version": "1.0.0",
         "docs": "https://planora-backend.onrender.com/docs"
     }
+
+@app.get("/ping")
+async def ping():
+    return {"status": "alive", "api": "Planora"}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RECOMMENDATION ENDPOINT
