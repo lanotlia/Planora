@@ -1,14 +1,26 @@
 import joblib
 import json
-import numpy as np
-from model.data import apply_rules, TECHNIQUES
+import os
+from model.data import TECHNIQUES, apply_rules
 
-# load once when the module is imported
-models   = joblib.load("model/artifacts/models.pkl")
-encoders = joblib.load("model/artifacts/encoders.pkl")
+# ── Lazy loading — models load on first prediction, not at import ─────────────
+_models   = None
+_encoders = None
+_feature_cols = None
 
-with open("model/artifacts/feature_cols.json") as f:
-    feature_cols = json.load(f)
+def _load_artifacts():
+    global _models, _encoders, _feature_cols
+    
+    if _models is None:
+        print("Loading model artifacts...")
+        _models   = joblib.load("model/artifacts/models.pkl")
+        _encoders = joblib.load("model/artifacts/encoders.pkl")
+        
+        with open("model/artifacts/feature_cols.json") as f:
+            _feature_cols = json.load(f)
+        print("Model artifacts loaded.")
+    
+    return _models, _encoders, _feature_cols
 
 # ── Technique descriptions for the frontend ──────────────────────────────────
 TECHNIQUE_INFO = {
@@ -157,6 +169,8 @@ TECHNIQUE_INFO = {
 }
 
 def _encode_profile(combined: dict) -> list:
+    models, encoders, feature_cols = _load_artifacts()  # ← gets feature_cols here
+    
     categorical_cols = [
         "attention_span", "learning_style", "peak_focus_time",
         "study_env", "user_category", "struggle",
@@ -165,61 +179,44 @@ def _encode_profile(combined: dict) -> list:
     ]
     
     encoded = {}
-    for col in feature_cols:
+    for col in feature_cols:          # ← uses local feature_cols
         val = combined.get(col, 0)
         if col in categorical_cols and col in encoders:
             try:
                 val = encoders[col].transform([val])[0]
             except ValueError:
-                # unseen label or not_applicable — default to 0
                 val = 0
-        # Handle any remaining string values that slipped through
         if isinstance(val, str):
             val = 0
         encoded[col] = val
     
-    return [encoded[col] for col in feature_cols]
+    return [encoded[col] for col in feature_cols]   # ← uses local feature_cols
+
 
 def predict(user_profile: dict, subject_profile: dict) -> dict:
-    """
-    Takes user and subject profiles, returns personalised technique recommendations
-    with explanations the frontend can display directly.
-    """
+    models, encoders, feature_cols = _load_artifacts()  # ← gets feature_cols here
+    combined = {**user_profile, **subject_profile}
     
-    combined  = {**user_profile, **subject_profile}
-    
-    # Get rule-based recommendations first
-    rule_based = apply_rules(combined)
-    
-    # Get model-based recommendations
+    rule_based     = apply_rules(combined)
     feature_vector = _encode_profile(combined)
     
     model_scores = {}
     for technique, model in models.items():
         prob = model.predict_proba([feature_vector])[0]
-        # prob[1] is the probability this technique is recommended
         model_scores[technique] = prob[1] if len(prob) > 1 else 0
-    
-    # Blend: rule-based provides the ranking, model validates and reorders
-    # A technique needs to be in rules AND have model confidence > 0.4
+
     final_techniques = []
     for tech in rule_based:
         confidence = model_scores.get(tech, 0)
-        if confidence > 0.4:
+        if confidence > 0.3:
             final_techniques.append((tech, confidence))
-    
-    # Sort by model confidence
+
     final_techniques.sort(key=lambda x: x[1], reverse=True)
-    
-    # Take top 5
     top_5 = final_techniques[:5]
-    
-    # If model filtered too aggressively, fall back to pure rules
+
     if len(top_5) < 3:
         top_5 = [(t, 1.0) for t in rule_based[:5]]
 
-    
-     # Build response
     recommendations = []
     for i, (tech, confidence) in enumerate(top_5):
         info = TECHNIQUE_INFO.get(tech, {})
@@ -238,7 +235,6 @@ def predict(user_profile: dict, subject_profile: dict) -> dict:
         "session_length":  _recommend_session_length(combined),
         "daily_sessions":  _recommend_session_count(combined),
     }
-
 
 def _recommend_session_length(profile: dict) -> str:
     if profile.get("has_adhd") or profile.get("attention_span") == "under_10":
