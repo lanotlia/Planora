@@ -50,10 +50,11 @@ def extract_session_signals(checkin_text: str, user_category: str) -> dict:
       feeling overwhelmed, or nervousness about the material or upcoming exams.
     """
 
-    response = get_client().models.generate_content(
+    prompt_text = f"""..."""
+    response = client.models.generate_content(
     model="gemini-2.0-flash",
-    contents=prompt
-    )
+    contents=prompt_text
+)
     raw = response.text.strip()
 
     if raw.startswith("```"):

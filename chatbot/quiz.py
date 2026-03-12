@@ -2,7 +2,7 @@ from google import genai
 import os
 import json
 from dotenv import load_dotenv
-from typer import prompt
+
 
 load_dotenv()
 
@@ -231,10 +231,11 @@ def generate_questions(
     Study material:
     {material}
     """
-
+    prompt_text = f"""..."""
     response = client.models.generate_content(
-    model="gemini-2.0-flash",
-    contents=prompt
+     model="gemini-2.0-flash",
+     contents=prompt_text
+
 )
     raw = response.text.strip()
 

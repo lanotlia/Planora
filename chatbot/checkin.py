@@ -1,7 +1,6 @@
 from google import genai
 import os
 from dotenv import load_dotenv
-from prompt_toolkit import prompt
 from chatbot.quiz import generate_questions, evaluate_answer
 from chatbot.updater import extract_session_signals, generate_session_summary
 
@@ -46,10 +45,12 @@ class CheckInSession:
         self.chat_history    = []
 
         # Single Gemini chat session — maintains context across the conversation
-        response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt
+    prompt_text = f"""..."""
+    response = client.models.generate_content(
+     model="gemini-2.0-flash",
+     contents=prompt_text
 )
+
     # ─────────────────────────────────────────────────────────────────────────
     # SYSTEM CONTEXT
     # Single source of truth for how Gemini communicates with this user.
