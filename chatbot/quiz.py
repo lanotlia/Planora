@@ -6,8 +6,7 @@ from typer import prompt
 
 load_dotenv()
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini = genai.GenerativeModel("gemini-2.0-flash")
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 def extract_text_from_material(material: str) -> str:
@@ -233,7 +232,10 @@ def generate_questions(
     {material}
     """
 
-    response = gemini.generate_content(prompt)
+    response = client.models.generate_content(
+    model="gemini-2.0-flash",
+    contents=prompt
+)
     raw = response.text.strip()
 
     # Strip markdown code blocks if Gemini adds them
@@ -365,7 +367,10 @@ def evaluate_answer(
     }}
     """
 
-    response = gemini.generate_content(prompt)
+    response = client.models.generate_content(
+    model="gemini-2.0-flash",
+    contents=prompt
+)
     raw = response.text.strip()
 
     if raw.startswith("```"):

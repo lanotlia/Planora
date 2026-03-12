@@ -1,14 +1,15 @@
-import google.generativeai as genai
+from google import genai
 import os
 from dotenv import load_dotenv
+from prompt_toolkit import prompt
 from chatbot.quiz import generate_questions, evaluate_answer
 from chatbot.updater import extract_session_signals, generate_session_summary
 
 load_dotenv()
 
 # Configure once at module level — never inside a function or class
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini = genai.GenerativeModel("gemini-2.0-flash")
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
 
 def get_client():
     return genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
@@ -45,7 +46,10 @@ class CheckInSession:
         self.chat_history    = []
 
         # Single Gemini chat session — maintains context across the conversation
-        self.chat = gemini.start_chat(history=[])
+        response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt
+)
     # ─────────────────────────────────────────────────────────────────────────
     # SYSTEM CONTEXT
     # Single source of truth for how Gemini communicates with this user.

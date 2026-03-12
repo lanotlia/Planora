@@ -10,8 +10,9 @@ import gdown
 import os
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse
-load_dotenv()
+from google import genai
 
+load_dotenv()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STARTUP — train model if artifacts don't exist
@@ -25,8 +26,6 @@ def download_model_artifacts():
         "model/artifacts/models.pkl":       "17OQb35a69y8RZ_mUfZLT9oVGzRv5IpAW",
         "model/artifacts/encoders.pkl":     "1rKLQj2WAJT5KCQvUy74mCSlno7u69CCi",
         "model/artifacts/feature_cols.json":"1qxM29f_35YWCyz7KSpg5VAr1MsrysXpL"
-
-
     }
     
     for path, file_id in files.items():
@@ -310,11 +309,9 @@ async def create_flashcards(data: FlashcardRequest):
     ready to be saved directly to Supabase.
     """
     try:
-        import google.generativeai as genai
         import json
 
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
         material = data.material[:8000] if len(data.material) > 8000 else data.material
 
@@ -344,7 +341,10 @@ async def create_flashcards(data: FlashcardRequest):
         {material}
         """
 
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt
+)
         raw = response.text.strip()
 
         if raw.startswith("```"):
