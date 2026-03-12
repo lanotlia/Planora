@@ -7,7 +7,7 @@ from typer import prompt
 load_dotenv()
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini = genai.GenerativeModel("gemini-1.5-flash")
+gemini = genai.GenerativeModel("gemini-2.0-flash")
 
 
 def extract_text_from_material(material: str) -> str:

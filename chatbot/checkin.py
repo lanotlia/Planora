@@ -8,7 +8,7 @@ load_dotenv()
 
 # Configure once at module level — never inside a function or class
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini = genai.GenerativeModel("gemini-1.5-flash")
+gemini = genai.GenerativeModel("gemini-2.0-flash")
 
 def get_client():
     return genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
