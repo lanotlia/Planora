@@ -233,7 +233,7 @@ def generate_questions(
     """
     prompt_text = f"""..."""
     response = client.models.generate_content(
-     model="gemini-1.5-flash",
+     model="gemini-2.0-flash-lite",
      contents=prompt_text
 
 )
@@ -369,7 +369,7 @@ def evaluate_answer(
     """
 
     response = client.models.generate_content(
-    model="gemini-1.5-flash",
+    model="gemini-2.0-flash-lite",
     contents=prompt
 )
     raw = response.text.strip()

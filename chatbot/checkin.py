@@ -47,7 +47,7 @@ class CheckInSession:
         # Single Gemini chat session — maintains context across the conversation
     prompt_text = f"""..."""
     response = client.models.generate_content(
-     model="gemini-1.5-flash",
+     model="gemini-2.0-flash-lite",
      contents=prompt_text
 )
 

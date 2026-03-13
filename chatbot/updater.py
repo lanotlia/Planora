@@ -52,7 +52,7 @@ def extract_session_signals(checkin_text: str, user_category: str) -> dict:
 
     prompt_text = f"""..."""
     response = client.models.generate_content(
-    model="gemini-1.5-flash",
+    model="gemini-2.0-flash-lite",
     contents=prompt_text
 )
     raw = response.text.strip()
@@ -263,7 +263,7 @@ def _generate_encouragement(
         """
 
     response = client.models.generate_content(
-    model="gemini-1.5-flash",
+    model="gemini-2.0-flash-lite",
     contents=prompt
 )
     return response.text.strip()
