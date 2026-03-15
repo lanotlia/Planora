@@ -1,5 +1,6 @@
 import sys
 import os
+sys.stdout.reconfigure(line_buffering=True)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -184,19 +185,6 @@ async def ping():
 # ─────────────────────────────────────────────────────────────────────────────
 # RECOMMENDATION ENDPOINT
 # ─────────────────────────────────────────────────────────────────────────────
-
-@app.post("/recommend")
-async def get_recommendations(user: UserProfile, subject: SubjectProfile):
-    """
-    Takes a user profile and a subject profile.
-    Returns a personalised list of study technique recommendations
-    with explanations, session length, and daily session count.
-    """
-    try:
-        result = predict(user.dict(), subject.dict())
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -665,25 +653,21 @@ async def list_subjects(user_id: str):
 
 
 # ── UPDATE RECOMMEND TO SAVE TO DB ────────────────────────────────────────────
+class RecommendRequest(BaseModel):
+    user:       UserProfile
+    subject:    SubjectProfile
+    user_id:    Optional[str] = None
+    subject_id: Optional[str] = None
 
 @app.post("/recommend")
-async def get_recommendations_endpoint(
-    user: UserProfile,
-    subject: SubjectProfile,
-    user_id: Optional[str] = None,
-    subject_id: Optional[str] = None
-):
-    """
-    Get recommendations and optionally save them to the database.
-    Pass user_id and subject_id to save. Omit them to just get recommendations.
-    """
+async def get_recommendations_endpoint(data: RecommendRequest):
     try:
-        result = predict(user.dict(), subject.dict())
+        result = predict(data.user.dict(), data.subject.dict())
 
-        if user_id and subject_id:
+        if data.user_id and data.subject_id:
             save_recommendations(
-                user_id    = user_id,
-                subject_id = subject_id,
+                user_id    = data.user_id,
+                subject_id = data.subject_id,
                 recommendations = result["recommendations"],
                 session_meta    = {
                     "session_length": result["session_length"],
