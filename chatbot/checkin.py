@@ -44,6 +44,7 @@ class CheckInSession:
         self.current_q_idx   = 0
         self.quiz_results    = []
         self.chat_history    = []
+        self.chat            = client.chats.create(model="gemini-2.0-flash-lite")
 
         # Single Gemini chat session — maintains context across the conversation
     prompt_text = f"""..."""
@@ -235,9 +236,10 @@ class CheckInSession:
     def process_checkin_response(self, user_message: str) -> str:
         """
         Process the user's how-did-it-go response.
-        Extracts session signals via Gemini, generates quiz questions
-        from the study material if provided, and transitions to the quiz.
-        If no material was provided, closes the session with a practical tip.
+        Extracts session signals via Gemini, then either:
+        - Transitions straight to quiz if material was already provided at session start
+        - Prompts the user to share their study material before the quiz
+        - Closes the session with a practical tip if no material is ever provided
         """
 
         self.checkin_text    = user_message
@@ -247,136 +249,143 @@ class CheckInSession:
         )
 
         system_context = self._build_system_context()
-        has_autism     = self.user_profile.get("has_autism", 0)
-        has_anxiety    = self.user_profile.get("has_anxiety", 0)
 
+        # ── If material was already provided at session start, go straight to quiz
         if self.material:
-            # Generate questions from study material
-            self.questions = generate_questions(
-                material     = self.material,
-                user_profile = self.user_profile,
-                subject_name = self.subject_name
+            return self._transition_to_quiz(system_context)
+
+        # ── No material yet — prompt the user to share it ────────────────────────
+        self.stage = "material_prompt"
+        has_autism  = self.user_profile.get("has_autism", 0)
+        has_anxiety = self.user_profile.get("has_anxiety", 0)
+
+        if has_autism:
+            # Autism: completely literal and explicit, no ambiguity or idioms
+            prompt_message = (
+                f"You can now share your study material for {self.subject_name}. "
+                f"Paste your notes or type 'skip' to continue without material."
             )
-            self.stage = "quiz"
 
-            # Build the transition message to the quiz
-            # Each condition gets a different transition style
-            if has_autism:
-                # Autism: explicit, literal, no idioms, state exactly what happens
-                transition_prompt = f"""
-                {system_context}
+        elif has_anxiety:
+            # Anxiety: low stakes framing, make it feel optional not mandatory
+            prompt_text = f"""
+            {system_context}
 
-                The student said: "{user_message}"
+            The student just told you how their session went: "{user_message}"
 
-                Write exactly 2 sentences:
-                Sentence 1: Acknowledge what they said literally and factually.
-                  No idioms. No phrases like "sounds like" or "tough one."
-                  Good: "You completed the session and found parts of it difficult."
-                  Bad: "Sounds like it was a tough one!"
-                Sentence 2: State explicitly what happens now.
-                  Good: "I am going to ask you {len(self.questions)} questions
-                  about {self.subject_name} now."
-                  Bad: "Let's see what stuck!"
+            Acknowledge their response warmly in one sentence. Focus on effort not outcome.
+            Then gently ask if they want to share what they covered today — notes,
+            slides, or anything — so you can help them remember it better.
+            Make it feel completely optional and low pressure.
+            Tell them they can type 'skip' if they would rather not.
+            Never use the word 'test', 'quiz', or 'upload'.
+            Two sentences total maximum.
+            """
 
-                No other sentences. No filler. No encouragement phrases.
-                """
-
-            elif has_anxiety:
-                # Anxiety: low-stakes framing, no test language
-                transition_prompt = f"""
-                {system_context}
-
-                The student said: "{user_message}"
-
-                Acknowledge their response warmly in one sentence.
-                Then in one sentence, transition to the questions using
-                low-stakes language. Say something like "let's see what
-                stuck from today" — never "let me test you" or "quiz time."
-                Two sentences total maximum.
-                """
-
-            else:
-                transition_prompt = f"""
-                {system_context}
-
-                The student said: "{user_message}"
-
-                Acknowledge their response briefly in one sentence.
-                Then naturally say you want to go through what they
-                just studied together. Two sentences total maximum.
-                """
-
-            transition   = self.chat.send_message(transition_prompt)
-            first_q      = self._format_question(self.questions[0])
-            return f"{transition.text.strip()}\n\n{first_q}"
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-lite",
+                contents=prompt_text
+            )
+            prompt_message = response.text.strip()
 
         else:
-            # No material provided — close with a practical tip
+            # Standard: warm, natural, conversational
+            prompt_text = f"""
+            {system_context}
+
+            The student just told you how their session went: "{user_message}"
+
+            Acknowledge their response in one sentence.
+            Then ask them to share what they studied today — their notes, slides,
+            or any material — so you can quiz them and create flashcards for them.
+            Make it feel natural and optional, not mandatory.
+            Keep it to 2 sentences total.
+            Use conversational language.
+            Do not use the word 'upload'.
+            Say something like 'paste your notes' or 'share what you covered today'.
+            End by telling them they can type 'skip' if they would rather not.
+            """
+
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-lite",
+                contents=prompt_text
+            )
+            prompt_message = response.text.strip()
+
+        return prompt_message
+    def process_material_response(self, user_message: str) -> str:
+        """
+        Handle the user's response to the material prompt.
+        They either paste material, describe what they studied, or skip.
+        """
+        system_context = self._build_system_context()
+        skip_phrases   = ["skip", "no", "nope", "nothing", "i don't have", 
+                        "i dont have", "no material", "no notes", "pass"]
+
+        user_lower = user_message.lower().strip()
+        skipped    = any(phrase in user_lower for phrase in skip_phrases)
+
+        if skipped or len(user_message.strip()) < 10:
+            # User skipped — do a simple check-in close without quiz
             self.stage = "summary"
 
             close_prompt = f"""
             {system_context}
+            The student chose not to share material for {self.subject_name}.
+            Acknowledge that warmly in one sentence.
+            Give one practical tip for their next session based on what you know
+            about them. Keep it to 2 sentences total.
+            """
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-lite",
+                contents=close_prompt
+            )
+            return response.text.strip()
 
-            The student said: "{user_message}"
+        else:
+            # User provided material — save it and move to quiz
+            self.material = user_message
+            return self._transition_to_quiz(system_context)
 
-            Acknowledge what they shared.
-            Give one practical, specific tip for their next session based
-            on what they told you. Keep it to 2 sentences maximum.
+
+    def _transition_to_quiz(self, system_context: str) -> str:
+        """
+        Generate questions from material and transition into the quiz.
+        Extracted as a helper so both process_checkin_response and
+        process_material_response can call it.
+        """
+        self.questions = generate_questions(
+            material     = self.material,
+            user_profile = self.user_profile,
+            subject_name = self.subject_name,
+        )
+        self.stage = "quiz"
+
+        has_autism = self.user_profile.get("has_autism", 0)
+
+        if has_autism:
+            transition_instruction = f"""
+            {system_context}
+            Acknowledge that you received the material in one literal sentence.
+            Then state exactly: "I am going to ask you {len(self.questions)} 
+            questions about {self.subject_name} now."
+            """
+        else:
+            transition_instruction = f"""
+            {system_context}
+            Acknowledge that you have their material in one sentence.
+            Then naturally say you want to see what stuck from the session.
+            Two sentences total maximum.
             """
 
-            close = self.chat.send_message(close_prompt)
-            return close.text.strip()
-
-    def process_quiz_answer(self, user_answer: str):
-        """
-        Evaluate the current question answer.
-        Returns a string response if more questions remain.
-        Returns a tuple (message, summary_dict) when the quiz is complete.
-        """
-
-        current_question = self.questions[self.current_q_idx]
-
-        # Evaluate the answer using Gemini
-        result = evaluate_answer(
-            question      = current_question["question"],
-            correct_answer= current_question["correct_answer"],
-            user_answer   = user_answer,
-            question_type = current_question["type"],
-            user_profile  = self.user_profile
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-lite",
+            contents=transition_instruction
         )
 
-        result["question_id"] = current_question["id"]
-        self.quiz_results.append(result)
-        self.current_q_idx += 1
-
-        # More questions remain — give feedback and ask the next one
-        if self.current_q_idx < len(self.questions):
-            feedback = result["feedback"]
-            next_q   = self._format_question(self.questions[self.current_q_idx])
-            return f"{feedback}\n\n{next_q}"
-
-        # All questions answered — generate the final summary
-        else:
-            self.stage = "complete"
-            return self._generate_final_summary()
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # HELPER METHODS
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def _format_question(self, question: dict) -> str:
-        """
-        Format a question object into a readable string for the user.
-        Multiple choice questions get their options displayed.
-        """
-
-        text = f"**Question {question['id']}:** {question['question']}"
-
-        if question.get("options"):
-            options_text = "\n".join(question["options"])
-            text += f"\n\n{options_text}"
-
-        return text
+        first_q = self._format_question(self.questions[0])
+        return f"{response.text.strip()}\n\n{first_q}"
+        
 
     def _generate_final_summary(self) -> tuple:
         """
@@ -463,6 +472,16 @@ class CheckInSession:
                     f"You scored {score_pct}%. This material needs another "
                     f"pass — completely expected at this stage."
                 )
+            
+
+        # ── Flashcard note — always define this before summary_message ───────────
+        flashcard_note = ""                          # ← always defined first
+        if flashcards:
+            due_date = flashcards[0].get("next_review_date", next_review)
+            flashcard_note = (
+                f" I have created {len(flashcards)} flashcards for you to review "
+                f"before your next session on {due_date}."
+        )
 
         summary_message = (
             f"{performance_note}"
