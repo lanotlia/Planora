@@ -1,9 +1,10 @@
 from google import genai
 import os
+import json
 from dotenv import load_dotenv
-from chatbot.quiz import generate_questions, evaluate_answer
-from chatbot.updater import extract_session_signals, generate_session_summary
 from chatbot.quiz import generate_questions, evaluate_answer, generate_flashcards_for_session, _get_base_interval
+from chatbot.updater import extract_session_signals, generate_session_summary
+
 
 load_dotenv()
 
@@ -11,21 +12,18 @@ load_dotenv()
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
-def get_client():
-    return genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
 class CheckInSession:
     """
     Manages the full state of a single check-in conversation session.
     One instance is created per user per study session check-in.
 
     Flow:
+        Flow:
         1. start()                      — opens the conversation
-        2. process_checkin_response()   — handles how-did-it-go response,
-                                          extracts signals, transitions to quiz
-        3. process_quiz_answer()        — handles each quiz answer, gives feedback,
-                                          generates final summary when done
-        4. get_session_data()           — returns all data for saving to Supabase
+        2. process_checkin_response()   — handles how-did-it-go response
+        3. process_material_response()  — handles study material or skip
+        4. process_quiz_answer()        — handles each quiz answer
+        5. get_session_data()           — returns all data for saving to Supabase
     """
 
     def __init__(
@@ -44,14 +42,7 @@ class CheckInSession:
         self.current_q_idx   = 0
         self.quiz_results    = []
         self.chat_history    = []
-        self.chat            = client.chats.create(model="gemini-2.0-flash-lite")
 
-        # Single Gemini chat session — maintains context across the conversation
-    prompt_text = f"""..."""
-    response = client.models.generate_content(
-     model="gemini-2.0-flash-lite",
-     contents=prompt_text
-)
 
     # ─────────────────────────────────────────────────────────────────────────
     # SYSTEM CONTEXT

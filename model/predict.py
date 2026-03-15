@@ -25,7 +25,7 @@ def _load_artifacts():
 # ── Technique descriptions for the frontend ──────────────────────────────────
 TECHNIQUE_INFO = {
     "dual_coding": {
-        "name": "dual_coding",
+        "name": "Dual_Coding",
         "how_to": 
             "Every time you write notes on a concept, draw a visual representation "
             "alongside it — a diagram, timeline, flowchart, or sketch. They must "

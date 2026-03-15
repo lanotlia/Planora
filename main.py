@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -12,6 +15,14 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse
 from google import genai
 from datetime import datetime, timedelta
+from database.supabase import (
+    create_user, get_user, update_user,
+    create_subject, get_subjects, get_subject,
+    save_recommendations, get_recommendations,
+    save_session, get_sessions,
+    save_flashcards, get_due_flashcards, update_flashcard_after_review,
+    save_quiz_results
+)
 
 load_dotenv()
 
@@ -247,6 +258,14 @@ async def send_checkin_message(data: CheckInMessage):
                 "message": response,
                 "stage":   session.stage,
             }
+        
+        # ── Stage: material prompt ────────────────────────────────────────
+        elif session.stage == "material_prompt":
+            response = session.process_material_response(data.message)
+            return {
+                "message": response,
+                "stage":   session.stage,
+            }
 
         # ── Stage: quiz ───────────────────────────────────────────────────────
         elif session.stage == "quiz":
@@ -273,6 +292,13 @@ async def send_checkin_message(data: CheckInMessage):
             }
 
         # ── Stage: complete ───────────────────────────────────────────────────
+        elif session.stage == "summary":
+            active_sessions.pop(data.user_id, None)
+            return {
+                "message": "Session complete.",
+                "stage":   "complete"
+            }
+        
         else:
             active_sessions.pop(data.user_id, None)
             return {
@@ -559,5 +585,253 @@ async def study_qa(data: QARequest):
             "user_id":      data.user_id
         }
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+# ── USER ENDPOINTS ────────────────────────────────────────────────────────────
+
+class OnboardingProfile(BaseModel):
+    user_name:       Optional[str] = "there"
+    user_category:   str
+    age:             Optional[int] = None
+    has_adhd:        int = 0
+    has_dyslexia:    int = 0
+    has_autism:      int = 0
+    has_anxiety:     int = 0
+    attention_span:  str
+    sleep_hours:     float
+    daily_study_hrs: float
+    learning_style:  str
+    peak_focus_time: str
+    study_env:       str
+    struggle:        str
+    current_level:   Optional[str] = "not_applicable"
+    prior_attempt:   Optional[str] = "not_applicable"
+    success_goal:    Optional[str] = ""
+
+@app.post("/users")
+async def create_new_user(profile: OnboardingProfile):
+    """Save a new user profile after onboarding completes"""
+    try:
+        user = create_user(profile.dict())
+        return {"user_id": user["id"], "user": user}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/users/{user_id}")
+async def get_user_profile(user_id: str):
+    """Get a user profile by ID"""
+    try:
+        user = get_user(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── SUBJECT ENDPOINTS ─────────────────────────────────────────────────────────
+
+class SubjectCreate(BaseModel):
+    user_id:      str
+    subject_name: str
+    content_type: str
+    memory_load:  str
+    difficulty:   int
+    has_deadline: int
+    days_to_exam: Optional[int] = 999
+    exam_date:    Optional[str] = None
+
+@app.post("/subjects")
+async def add_subject(data: SubjectCreate):
+    """Add a new subject for a user"""
+    try:
+        subject = create_subject(data.dict())
+        return {"subject_id": subject["id"], "subject": subject}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/subjects/{user_id}")
+async def list_subjects(user_id: str):
+    """Get all active subjects for a user"""
+    try:
+        subjects = get_subjects(user_id)
+        return {"subjects": subjects, "count": len(subjects)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── UPDATE RECOMMEND TO SAVE TO DB ────────────────────────────────────────────
+
+@app.post("/recommend")
+async def get_recommendations_endpoint(
+    user: UserProfile,
+    subject: SubjectProfile,
+    user_id: Optional[str] = None,
+    subject_id: Optional[str] = None
+):
+    """
+    Get recommendations and optionally save them to the database.
+    Pass user_id and subject_id to save. Omit them to just get recommendations.
+    """
+    try:
+        result = predict(user.dict(), subject.dict())
+
+        if user_id and subject_id:
+            save_recommendations(
+                user_id    = user_id,
+                subject_id = subject_id,
+                recommendations = result["recommendations"],
+                session_meta    = {
+                    "session_length": result["session_length"],
+                    "daily_sessions": result["daily_sessions"]
+                }
+            )
+
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── UPDATE CHECKIN COMPLETE TO SAVE TO DB ─────────────────────────────────────
+
+@app.post("/checkin/message")
+async def send_checkin_message(data: CheckInMessage):
+    session = active_sessions.get(data.user_id)
+
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail="No active session found. Call /checkin/start first."
+        )
+
+    try:
+        if session.stage == "checkin":
+            response = session.process_checkin_response(data.message)
+            return {"message": response, "stage": session.stage}
+
+        elif session.stage == "material_prompt":
+            response = session.process_material_response(data.message)
+            return {"message": response, "stage": session.stage}
+
+        elif session.stage == "quiz":
+            result = session.process_quiz_answer(data.message)
+
+            if isinstance(result, tuple):
+                message, summary = result
+                active_sessions.pop(data.user_id, None)
+
+                # ── Save session to Supabase ──────────────────────────────
+                saved_session = None
+                try:
+                    subject_id = session.user_profile.get("subject_id")
+                    if subject_id:
+                        saved_session = save_session(
+                            user_id         = data.user_id,
+                            subject_id      = subject_id,
+                            summary         = summary,
+                            checkin_signals = session.checkin_signals
+                        )
+
+                        if saved_session:
+                            # Save quiz results
+                            save_quiz_results(
+                                session_id   = saved_session["id"],
+                                user_id      = data.user_id,
+                                quiz_results = session.quiz_results
+                            )
+
+                            # Save flashcards
+                            if summary.get("flashcards"):
+                                save_flashcards(
+                                    user_id    = data.user_id,
+                                    subject_id = subject_id,
+                                    session_id = saved_session["id"],
+                                    flashcards = summary["flashcards"]
+                                )
+                except Exception as db_error:
+                    # Don't fail the whole request if DB save fails
+                    print(f"DB save error: {db_error}")
+
+                return {
+                    "message":    message,
+                    "stage":      "complete",
+                    "summary":    summary,
+                    "session_id": saved_session["id"] if saved_session else None,
+                    "session":    session.get_session_data()
+                }
+
+            return {"message": result, "stage": "quiz"}
+
+        else:
+            active_sessions.pop(data.user_id, None)
+            return {"message": "Session complete.", "stage": "complete"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── FLASHCARD DUE ENDPOINT — UPDATE TO USE SUPABASE ──────────────────────────
+
+@app.get("/flashcards/due")
+async def get_due_flashcards_endpoint(user_id: str, subject_id: str, today: str = None):
+    """Get flashcards due for review today"""
+    try:
+        from datetime import datetime
+        review_date = today or datetime.now().strftime("%Y-%m-%d")
+        cards = get_due_flashcards(user_id, subject_id, review_date)
+        return {
+            "flashcards": cards,
+            "count":      len(cards),
+            "date":       review_date
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── FLASHCARD RATE — UPDATE TO SAVE TO SUPABASE ──────────────────────────────
+
+@app.post("/flashcards/rate")
+async def rate_flashcard(data: FlashcardRating):
+    """Update flashcard spaced rep values after user reviews it"""
+    try:
+        # Fetch current card values from Supabase
+        from supabase import create_client
+        import os
+        sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+        card = sb.table("flashcards").select("*").eq("id", data.card_id).execute()
+
+        if not card.data:
+            raise HTTPException(status_code=404, detail="Flashcard not found")
+
+        current = card.data[0]
+        new_interval, new_ease, next_date = calculate_sm2(
+            rating        = data.rating,
+            interval_days = current["interval_days"],
+            ease_factor   = current["ease_factor"]
+        )
+
+        updated = update_flashcard_after_review(
+            card_id          = data.card_id,
+            rating           = data.rating,
+            new_interval     = new_interval,
+            new_ease         = new_ease,
+            next_review_date = next_date
+        )
+
+        return {
+            "card_id":           data.card_id,
+            "new_interval_days": new_interval,
+            "new_ease_factor":   new_ease,
+            "next_review_date":  next_date,
+            "message":           f"Next review scheduled for {next_date}"
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
