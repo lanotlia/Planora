@@ -3,6 +3,7 @@ import os
 from dotenv import load_dotenv
 from chatbot.quiz import generate_questions, evaluate_answer
 from chatbot.updater import extract_session_signals, generate_session_summary
+from chatbot.quiz import generate_questions, evaluate_answer, generate_flashcards_for_session, _get_base_interval
 
 load_dotenv()
 
@@ -385,11 +386,12 @@ class CheckInSession:
         """
 
         summary = generate_session_summary(
-            checkin_signals = self.checkin_signals,
-            quiz_results    = self.quiz_results,
-            user_profile    = self.user_profile,
-            subject_name    = self.subject_name
+        checkin_signals = self.checkin_signals,
+        quiz_results    = self.quiz_results,
+        user_profile    = self.user_profile,
+        subject_name    = self.subject_name
         )
+
 
         score_pct     = summary["quiz_score"]
         next_review   = summary["next_review_date"]
@@ -397,6 +399,22 @@ class CheckInSession:
         understanding = summary["understanding"]
         has_anxiety   = self.user_profile.get("has_anxiety", 0)
         has_autism    = self.user_profile.get("has_autism", 0)
+
+ # ── Auto-generate flashcards if material was provided ─────────────────
+        flashcards = []
+        if self.material:
+            flashcards = generate_flashcards_for_session(
+                material      = self.material,
+                user_profile  = self.user_profile,
+                subject_name  = self.subject_name,
+                quiz_results  = self.quiz_results,   # use quiz results to focus cards
+                base_interval = _get_base_interval(score_pct)
+            )
+            summary["flashcards"]       = flashcards
+            summary["flashcard_count"]  = len(flashcards)
+        else:
+            summary["flashcards"]       = []
+            summary["flashcard_count"]  = 0
 
         # ── Autism: explicit, factual, literal performance summary ────────────
         if has_autism:
@@ -426,6 +444,7 @@ class CheckInSession:
                     f"normal for new content and it means today's session was "
                     f"still useful."
                 )
+            
 
         # ── Everyone else: standard performance note with score ───────────────
         else:
@@ -446,9 +465,10 @@ class CheckInSession:
                 )
 
         summary_message = (
-            f"{performance_note} "
-            f"Next review of {self.subject_name} scheduled for {next_review}."
-            f"\n\n{encouragement}"
+            f"{performance_note}"
+            f"{flashcard_note} "
+            f"Next review of {self.subject_name} scheduled for {next_review}.\n\n"
+            f"{encouragement}"
         )
 
         return summary_message, summary

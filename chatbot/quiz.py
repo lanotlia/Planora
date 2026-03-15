@@ -2,6 +2,7 @@ from google import genai
 import os
 import json
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
 
 
 load_dotenv()
@@ -184,6 +185,8 @@ def generate_questions(
         struggle_note = "Focus heavily on vocabulary retention and correct usage in context."
     elif struggle == "cant_produce":
         struggle_note = "Include questions that require the student to produce language, not just recognise it."
+
+    
 
     # ── Final prompt ──────────────────────────────────────────────────────────
     prompt = f"""
@@ -381,3 +384,123 @@ def evaluate_answer(
             raw = raw[4:]
 
     return json.loads(raw.strip())
+from datetime import datetime, timedelta
+
+def generate_flashcards_for_session(
+    material: str,
+    user_profile: dict,
+    subject_name: str,
+    quiz_results: list,
+    base_interval: int = 1
+) -> list:
+    """
+    Generate flashcards after a study session.
+    Uses quiz results to weight cards toward concepts the user struggled with.
+    Applies spaced repetition starting intervals based on session performance.
+    """
+
+    material = material[:6000] if len(material) > 6000 else material
+
+    # Extract concepts the user got wrong to focus flashcards on them
+    wrong_concepts = []
+    for result in quiz_results:
+        if not result.get("correct") and result.get("question_id"):
+            wrong_concepts.append(str(result.get("question_id")))
+
+    wrong_note = ""
+    if wrong_concepts:
+        wrong_note = f"""
+        PRIORITY: The student struggled with questions {', '.join(wrong_concepts)}.
+        Generate at least 2-3 flashcards specifically targeting those concepts.
+        These are the most important cards to reinforce.
+        """
+
+    has_adhd     = user_profile.get("has_adhd", 0)
+    has_dyslexia = user_profile.get("has_dyslexia", 0)
+
+    format_note = ""
+    if has_adhd or has_dyslexia:
+        format_note = """
+        Keep flashcard questions SHORT. One line maximum.
+        Keep answers SHORT. One or two sentences maximum.
+        Prefer simple vocabulary.
+        """
+
+    prompt_text = f"""
+    You are creating flashcards for a student who just finished studying {subject_name}.
+    These cards will appear before their next study session to reinforce memory.
+
+    {wrong_note}
+    {format_note}
+
+    Rules:
+    - Generate between 5 and 10 flashcards
+    - Focus on key concepts, definitions, and relationships
+    - Each card must be self-contained — no references to "the text above"
+    - Questions should be specific and answerable from memory
+    - Answers should be concise — maximum 2 sentences
+    - Vary the question types: definitions, applications, comparisons, cause-effect
+
+    Return ONLY a valid JSON array. No markdown. No extra text.
+    [
+      {{
+        "front": "question here",
+        "back": "answer here",
+        "difficulty": "easy/medium/hard",
+        "concept_tag": "short label for the concept this card covers"
+      }}
+    ]
+
+    Study material:
+    {material}
+    """
+
+    response = client.models.generate_content(
+        model="gemini-2.0-flash-lite",
+        contents=prompt_text
+    )
+
+    raw = response.text.strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else raw
+        if raw.startswith("json"):
+            raw = raw[4:]
+
+    cards = json.loads(raw.strip())
+
+    # Attach spaced repetition values to each card
+    today = datetime.now()
+    enriched = []
+    for i, card in enumerate(cards):
+        # Cards covering struggled concepts get shorter initial interval
+        is_priority = i < len(wrong_concepts)
+        interval = 1 if is_priority else base_interval
+
+        enriched.append({
+            "front":            card["front"],
+            "back":             card["back"],
+            "difficulty":       card["difficulty"],
+            "concept_tag":      card.get("concept_tag", ""),
+            "interval_days":    interval,
+            "ease_factor":      2.5,
+            "next_review_date": (today + timedelta(days=interval)).strftime("%Y-%m-%d"),
+            "times_reviewed":   0,
+            "last_rating":      None,
+            "is_priority":      is_priority   # flag for frontend to show these first
+        })
+
+    return enriched
+
+
+def _get_base_interval(score_pct: int) -> int:
+    """
+    Determine starting spaced repetition interval based on session performance.
+    Poor performance = shorter interval = review sooner.
+    """
+    if score_pct >= 80:
+        return 3    # strong session — review in 3 days
+    elif score_pct >= 60:
+        return 2    # moderate — review in 2 days
+    else:
+        return 1    # struggling — review tomorrow
