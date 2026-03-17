@@ -221,7 +221,10 @@ class CheckInSession:
             Keep it to 2-3 sentences maximum.
             """
 
-        response = self.chat.send_message(opening_prompt)
+        response = client.models.generate_content(
+           model="gemini-2.0-flash-lite",
+           contents=opening_prompt
+        )
         return response.text.strip()
 
     def process_checkin_response(self, user_message: str) -> str:
