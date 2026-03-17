@@ -472,7 +472,6 @@ def calculate_sm2(rating: int, interval_days: int, ease_factor: float) -> tuple:
 # STUDY Q&A ENDPOINT
 # ─────────────────────────────────────────────────────────────────────────────
 
-@app.post("/qa")
 # ── Request model ─────────────────────────────────────────────────────────────
 class QARequest(BaseModel):
     user_id:       str
