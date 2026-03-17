@@ -379,7 +379,45 @@ class CheckInSession:
 
         first_q = self._format_question(self.questions[0])
         return f"{response.text.strip()}\n\n{first_q}"
-        
+    
+    def _format_question(self, question: dict) -> str:
+        """Format a question object into a readable string for the user"""
+        text = f"Question {question['id']}: {question['question']}"
+        if question.get("options"):
+            options_text = "\n".join(question["options"])
+            text += f"\n\n{options_text}"
+        return text
+
+
+    def process_quiz_answer(self, user_answer: str):
+        """
+        Evaluate the current question answer and either ask the next
+        question or generate the session summary.
+        """
+        current_question = self.questions[self.current_q_idx]
+
+        result = evaluate_answer(
+            question       = current_question["question"],
+            correct_answer = current_question["correct_answer"],
+            user_answer    = user_answer,
+            question_type  = current_question["type"],
+            user_profile   = self.user_profile
+        )
+
+        result["question_id"] = current_question["id"]
+        self.quiz_results.append(result)
+        self.current_q_idx += 1
+
+        # More questions remaining
+        if self.current_q_idx < len(self.questions):
+            feedback = result["feedback"]
+            next_q   = self._format_question(self.questions[self.current_q_idx])
+            return f"{feedback}\n\n{next_q}"
+
+        # Quiz complete — generate summary
+        else:
+            self.stage = "summary"
+            return self._generate_final_summary()
 
     def _generate_final_summary(self) -> tuple:
         """
@@ -403,7 +441,7 @@ class CheckInSession:
         has_anxiety   = self.user_profile.get("has_anxiety", 0)
         has_autism    = self.user_profile.get("has_autism", 0)
 
- # ── Auto-generate flashcards if material was provided ─────────────────
+    # ── Auto-generate flashcards if material was provided ─────────────────
         flashcards = []
         if self.material:
             flashcards = generate_flashcards_for_session(
@@ -475,7 +513,7 @@ class CheckInSession:
             flashcard_note = (
                 f" I have created {len(flashcards)} flashcards for you to review "
                 f"before your next session on {due_date}."
-        )
+            )
 
         summary_message = (
             f"{performance_note}"
