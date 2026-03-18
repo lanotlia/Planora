@@ -1,15 +1,13 @@
-from google import genai
+from groq import Groq
 import os
 import json
 from dotenv import load_dotenv
 from chatbot.quiz import generate_questions, evaluate_answer, generate_flashcards_for_session, _get_base_interval
 from chatbot.updater import extract_session_signals, generate_session_summary
 
-
 load_dotenv()
 
-# Configure once at module level — never inside a function or class
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 
 class CheckInSession:
@@ -18,7 +16,6 @@ class CheckInSession:
     One instance is created per user per study session check-in.
 
     Flow:
-        Flow:
         1. start()                      — opens the conversation
         2. process_checkin_response()   — handles how-did-it-go response
         3. process_material_response()  — handles study material or skip
@@ -26,16 +23,11 @@ class CheckInSession:
         5. get_session_data()           — returns all data for saving to Supabase
     """
 
-    def __init__(
-        self,
-        user_profile: dict,
-        subject_name: str,
-        material: str = None
-    ):
+    def __init__(self, user_profile: dict, subject_name: str, material: str = None):
         self.user_profile    = user_profile
         self.subject_name    = subject_name
-        self.material        = material     # pasted text, extracted PDF, or None
-        self.stage           = "checkin"    # checkin → quiz → summary → complete
+        self.material        = material
+        self.stage           = "checkin"
         self.checkin_text    = ""
         self.checkin_signals = {}
         self.questions       = []
@@ -43,20 +35,15 @@ class CheckInSession:
         self.quiz_results    = []
         self.chat_history    = []
 
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # SYSTEM CONTEXT
-    # Single source of truth for how Gemini communicates with this user.
-    # Called at the start of every prompt sent to Gemini.
-    # ─────────────────────────────────────────────────────────────────────────
+    def _call_llm(self, prompt: str) -> str:
+        """Single helper for all LLM calls — keeps the code DRY"""
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content.strip()
 
     def _build_system_context(self) -> str:
-        """
-        Build the system context string injected into every Gemini prompt.
-        Layers general communication rules with condition-specific
-        accommodations for ADHD, dyslexia, autism, and anxiety.
-        """
-
         profile      = self.user_profile
         user_name    = profile.get("user_name", "there")
         category     = profile.get("user_category", "uni_student")
@@ -71,106 +58,65 @@ class CheckInSession:
         User category: {category}
         Subject just studied: {self.subject_name}
 
-        Core communication rules — always apply these no matter what:
+        Core communication rules:
         - Keep responses concise. Maximum 3 sentences unless giving feedback.
-        - Never use bullet points or numbered lists in your responses.
+        - Never use bullet points or numbered lists.
         - Do not use generic phrases like "Great job!" or "Well done!"
-          Be specific about what they actually did.
         - Write in plain conversational English.
         - Never break character or refer to yourself as an AI.
         """
 
         condition_notes = []
 
-        # ── ADHD accommodations ───────────────────────────────────────────────
         if has_adhd:
             condition_notes.append("""
-            ADHD accommodations — apply these strictly:
+            ADHD accommodations:
             - Use very short sentences. Maximum 15 words per sentence.
-            - One idea per message only. Never combine multiple points in one message.
-            - Be direct. Get to the point in the very first sentence.
+            - One idea per message only.
+            - Be direct. Get to the point immediately.
             - Positive and energetic tone without being over the top.
-            - No long reflective paragraphs. Keep it moving.
             """)
 
-        # ── Dyslexia accommodations ───────────────────────────────────────────
         if has_dyslexia:
             condition_notes.append("""
-            Dyslexia accommodations — apply these strictly:
-            - Maximum 2 sentences per response. This is a hard limit.
-            - Use only simple, common words. Nothing complex or multisyllabic
-              unless it is the subject term itself.
-            - Never write a paragraph longer than 2 lines.
-            - Put each new idea on its own line with a line break between them.
-            - When giving feedback, structure it as:
-              Line 1: Was the answer right or not, stated simply and directly.
-              Line 2: The one thing to remember. Nothing else.
-            - Do not draw attention to spelling errors in the student's answers.
-              Ever. Ignore all spelling and focus only on meaning.
+            Dyslexia accommodations:
+            - Maximum 2 sentences per response. Hard limit.
+            - Use only simple, common words.
+            - Do not draw attention to spelling errors. Ever.
             - Never use colons, semicolons, or complex punctuation.
             """)
 
-        # ── Autism accommodations ─────────────────────────────────────────────
         if has_autism:
             condition_notes.append("""
-            Autism accommodations — apply these strictly:
-            - Be completely literal and explicit at all times.
-              No idioms, metaphors, sarcasm, or vague language of any kind.
-            - Always tell the student exactly what is about to happen before
-              it happens. Unexpected transitions cause distress.
-              Example: "I am going to ask you 4 questions now. Take your time."
-            - Announce every stage transition clearly and explicitly.
-            - Maintain a predictable, consistent tone throughout.
-              No sudden shifts in energy, warmth, or style.
-            - Give direct feedback using clear factual statements.
-              Say: "That is correct." not "Ooh nice one!"
-              Say: "That is not correct." not "Not quite, but good try!"
-            - Never use sarcasm even if lighthearted.
-            - Never use phrases like "let's dive in", "sounds like",
-              "that's a tough one", or any idiom.
+            Autism accommodations:
+            - Be completely literal and explicit. No idioms or metaphors.
+            - Always tell the student exactly what happens next.
+            - Announce every stage transition clearly.
+            - Give direct feedback: "That is correct." not "Nice one!"
+            - Never use sarcasm.
             """)
 
-        # ── Anxiety accommodations ────────────────────────────────────────────
         if has_anxiety:
             condition_notes.append("""
-            Anxiety accommodations — apply these strictly:
-            - Frame everything as low-stakes and exploratory, not evaluative.
-            - Never use the words: test, exam, correct answer, wrong, fail,
-              score, performance, or grade in your responses.
-            - Instead of "Let me test you" say "Let's see what stuck."
-            - If they get something wrong, normalise it immediately before
-              explaining. Example: "That's a common mix-up — the key thing
-              to remember is [correction]."
-            - Always acknowledge what they understood correctly even in a
-              wrong answer, before explaining what to correct.
-            - Emphasise effort and the process of learning over results.
-            - Never mention time pressure or urgency.
-            - Keep tone warm and unhurried throughout.
+            Anxiety accommodations:
+            - Frame everything as low-stakes and exploratory.
+            - Never use: test, exam, correct answer, wrong, fail, score.
+            - If they get something wrong, normalise it before explaining.
+            - Emphasise effort over results.
+            - Never mention time pressure.
             """)
 
         if condition_notes:
-            base += "\n\nSpecific accommodations for this student:\n"
-            base += "\n".join(condition_notes)
+            base += "\n\nSpecific accommodations:\n" + "\n".join(condition_notes)
 
         return base
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # SESSION STAGES
-    # ─────────────────────────────────────────────────────────────────────────
-
     def start(self) -> str:
-        """
-        Generate the opening check-in message.
-        Autism users receive an explicit preview of the session structure
-        upfront so there are no unexpected transitions later.
-        """
-
         system_context = self._build_system_context()
         has_autism     = self.user_profile.get("has_autism", 0)
         has_anxiety    = self.user_profile.get("has_anxiety", 0)
         user_category  = self.user_profile.get("user_category", "uni_student")
 
-        # Build subject context phrase based on category
         if user_category == "language_learner":
             subject_context = f"your {self.subject_name} practice session"
         elif user_category == "cert_candidate":
@@ -178,8 +124,6 @@ class CheckInSession:
         else:
             subject_context = f"your {self.subject_name} session"
 
-        # Autism users need the full session structure explained upfront
-        # This prevents distress from unexpected transitions mid-conversation
         if has_autism:
             n_questions = 4 if self.user_profile.get("has_adhd") else 5
             material_note = (
@@ -189,53 +133,32 @@ class CheckInSession:
                 if self.material else
                 "After that, I will give you a summary of your session."
             )
-
             opening_prompt = f"""
             {system_context}
-
             Greet the student by name.
             Ask one direct question: how did {subject_context} go?
-            Then on a new line, explain the session structure clearly:
-            "{material_note}"
-
-            Three sentences maximum total. Be direct. No idioms.
+            Then explain the session structure: "{material_note}"
+            Three sentences maximum. Be direct. No idioms.
             """
 
-        # Anxiety users need the tone set as low-stakes immediately
         elif has_anxiety:
             opening_prompt = f"""
             {system_context}
-
             Start the check-in warmly. Ask how {subject_context} went
-            in a way that feels like a casual conversation, not an evaluation.
-            Ask about their energy and focus naturally.
+            as a casual conversation, not an evaluation.
             Keep it to 2 sentences. Make it feel safe and unhurried.
             """
 
         else:
             opening_prompt = f"""
             {system_context}
-
             Start the check-in. Ask how {subject_context} went.
-            Ask about their focus and energy in a natural conversational way.
-            Keep it to 2-3 sentences maximum.
+            Ask about focus and energy naturally. 2-3 sentences maximum.
             """
 
-        response = client.models.generate_content(
-           model="gemini-2.0-flash-lite",
-           contents=opening_prompt
-        )
-        return response.text.strip()
+        return self._call_llm(opening_prompt)
 
     def process_checkin_response(self, user_message: str) -> str:
-        """
-        Process the user's how-did-it-go response.
-        Extracts session signals via Gemini, then either:
-        - Transitions straight to quiz if material was already provided at session start
-        - Prompts the user to share their study material before the quiz
-        - Closes the session with a practical tip if no material is ever provided
-        """
-
         self.checkin_text    = user_message
         self.checkin_signals = extract_session_signals(
             user_message,
@@ -244,110 +167,64 @@ class CheckInSession:
 
         system_context = self._build_system_context()
 
-        # ── If material was already provided at session start, go straight to quiz
         if self.material:
             return self._transition_to_quiz(system_context)
 
-        # ── No material yet — prompt the user to share it ────────────────────────
-        self.stage = "material_prompt"
+        self.stage  = "material_prompt"
         has_autism  = self.user_profile.get("has_autism", 0)
         has_anxiety = self.user_profile.get("has_anxiety", 0)
 
         if has_autism:
-            # Autism: completely literal and explicit, no ambiguity or idioms
-            prompt_message = (
+            return (
                 f"You can now share your study material for {self.subject_name}. "
                 f"Paste your notes or type 'skip' to continue without material."
             )
 
         elif has_anxiety:
-            # Anxiety: low stakes framing, make it feel optional not mandatory
-            prompt_text = f"""
+            prompt = f"""
             {system_context}
-
-            The student just told you how their session went: "{user_message}"
-
-            Acknowledge their response warmly in one sentence. Focus on effort not outcome.
-            Then gently ask if they want to share what they covered today — notes,
-            slides, or anything — so you can help them remember it better.
-            Make it feel completely optional and low pressure.
-            Tell them they can type 'skip' if they would rather not.
+            The student said: "{user_message}"
+            Acknowledge warmly in one sentence. Focus on effort not outcome.
+            Then gently ask if they want to share what they covered today.
+            Make it feel optional. Tell them they can type 'skip'.
             Never use the word 'test', 'quiz', or 'upload'.
             Two sentences total maximum.
             """
-
-            response = client.models.generate_content(
-                model="gemini-2.0-flash-lite",
-                contents=prompt_text
-            )
-            prompt_message = response.text.strip()
-
         else:
-            # Standard: warm, natural, conversational
-            prompt_text = f"""
+            prompt = f"""
             {system_context}
-
-            The student just told you how their session went: "{user_message}"
-
-            Acknowledge their response in one sentence.
-            Then ask them to share what they studied today — their notes, slides,
-            or any material — so you can quiz them and create flashcards for them.
-            Make it feel natural and optional, not mandatory.
-            Keep it to 2 sentences total.
-            Use conversational language.
-            Do not use the word 'upload'.
-            Say something like 'paste your notes' or 'share what you covered today'.
-            End by telling them they can type 'skip' if they would rather not.
+            The student said: "{user_message}"
+            Acknowledge in one sentence.
+            Then ask them to share their notes, slides or any material
+            so you can quiz them and create flashcards.
+            Make it feel optional. Say they can type 'skip'.
+            Two sentences total maximum.
             """
 
-            response = client.models.generate_content(
-                model="gemini-2.0-flash-lite",
-                contents=prompt_text
-            )
-            prompt_message = response.text.strip()
+        return self._call_llm(prompt)
 
-        return prompt_message
     def process_material_response(self, user_message: str) -> str:
-        """
-        Handle the user's response to the material prompt.
-        They either paste material, describe what they studied, or skip.
-        """
         system_context = self._build_system_context()
-        skip_phrases   = ["skip", "no", "nope", "nothing", "i don't have", 
-                        "i dont have", "no material", "no notes", "pass"]
+        skip_phrases   = ["skip", "no", "nope", "nothing", "i don't have",
+                          "i dont have", "no material", "no notes", "pass"]
 
-        user_lower = user_message.lower().strip()
-        skipped    = any(phrase in user_lower for phrase in skip_phrases)
+        skipped = any(phrase in user_message.lower().strip() for phrase in skip_phrases)
 
         if skipped or len(user_message.strip()) < 10:
-            # User skipped — do a simple check-in close without quiz
             self.stage = "summary"
-
             close_prompt = f"""
             {system_context}
             The student chose not to share material for {self.subject_name}.
             Acknowledge that warmly in one sentence.
-            Give one practical tip for their next session based on what you know
-            about them. Keep it to 2 sentences total.
+            Give one practical tip for their next session. 2 sentences total.
             """
-            response = client.models.generate_content(
-                model="gemini-2.0-flash-lite",
-                contents=close_prompt
-            )
-            return response.text.strip()
+            return self._call_llm(close_prompt)
 
         else:
-            # User provided material — save it and move to quiz
             self.material = user_message
             return self._transition_to_quiz(system_context)
 
-
     def _transition_to_quiz(self, system_context: str) -> str:
-        """
-        Generate questions from material and transition into the quiz.
-        Extracted as a helper so both process_checkin_response and
-        process_material_response can call it.
-        """
         self.questions = generate_questions(
             material     = self.material,
             user_profile = self.user_profile,
@@ -360,40 +237,29 @@ class CheckInSession:
         if has_autism:
             transition_instruction = f"""
             {system_context}
-            Acknowledge that you received the material in one literal sentence.
-            Then state exactly: "I am going to ask you {len(self.questions)} 
+            Acknowledge you received the material in one literal sentence.
+            Then state: "I am going to ask you {len(self.questions)} 
             questions about {self.subject_name} now."
             """
         else:
             transition_instruction = f"""
             {system_context}
-            Acknowledge that you have their material in one sentence.
+            Acknowledge you have their material in one sentence.
             Then naturally say you want to see what stuck from the session.
             Two sentences total maximum.
             """
 
-        response = client.models.generate_content(
-            model="gemini-2.0-flash-lite",
-            contents=transition_instruction
-        )
+        response_text = self._call_llm(transition_instruction)
+        first_q       = self._format_question(self.questions[0])
+        return f"{response_text}\n\n{first_q}"
 
-        first_q = self._format_question(self.questions[0])
-        return f"{response.text.strip()}\n\n{first_q}"
-    
     def _format_question(self, question: dict) -> str:
-        """Format a question object into a readable string for the user"""
         text = f"Question {question['id']}: {question['question']}"
         if question.get("options"):
-            options_text = "\n".join(question["options"])
-            text += f"\n\n{options_text}"
+            text += "\n\n" + "\n".join(question["options"])
         return text
 
-
     def process_quiz_answer(self, user_answer: str):
-        """
-        Evaluate the current question answer and either ask the next
-        question or generate the session summary.
-        """
         current_question = self.questions[self.current_q_idx]
 
         result = evaluate_answer(
@@ -408,31 +274,21 @@ class CheckInSession:
         self.quiz_results.append(result)
         self.current_q_idx += 1
 
-        # More questions remaining
         if self.current_q_idx < len(self.questions):
             feedback = result["feedback"]
             next_q   = self._format_question(self.questions[self.current_q_idx])
             return f"{feedback}\n\n{next_q}"
-
-        # Quiz complete — generate summary
         else:
             self.stage = "summary"
             return self._generate_final_summary()
 
     def _generate_final_summary(self) -> tuple:
-        """
-        Generate the closing summary message and summary data object.
-        The message is adapted for the user's learning profile.
-        Returns a tuple: (message_string, summary_dict)
-        """
-
         summary = generate_session_summary(
-        checkin_signals = self.checkin_signals,
-        quiz_results    = self.quiz_results,
-        user_profile    = self.user_profile,
-        subject_name    = self.subject_name
+            checkin_signals = self.checkin_signals,
+            quiz_results    = self.quiz_results,
+            user_profile    = self.user_profile,
+            subject_name    = self.subject_name
         )
-
 
         score_pct     = summary["quiz_score"]
         next_review   = summary["next_review_date"]
@@ -441,73 +297,46 @@ class CheckInSession:
         has_anxiety   = self.user_profile.get("has_anxiety", 0)
         has_autism    = self.user_profile.get("has_autism", 0)
 
-    # ── Auto-generate flashcards if material was provided ─────────────────
+        # ── Auto-generate flashcards ──────────────────────────────────────────
         flashcards = []
         if self.material:
             flashcards = generate_flashcards_for_session(
                 material      = self.material,
                 user_profile  = self.user_profile,
                 subject_name  = self.subject_name,
-                quiz_results  = self.quiz_results,   # use quiz results to focus cards
+                quiz_results  = self.quiz_results,
                 base_interval = _get_base_interval(score_pct)
             )
-            summary["flashcards"]       = flashcards
-            summary["flashcard_count"]  = len(flashcards)
+            summary["flashcards"]      = flashcards
+            summary["flashcard_count"] = len(flashcards)
         else:
-            summary["flashcards"]       = []
-            summary["flashcard_count"]  = 0
+            summary["flashcards"]      = []
+            summary["flashcard_count"] = 0
 
-        # ── Autism: explicit, factual, literal performance summary ────────────
+        # ── Performance note ──────────────────────────────────────────────────
         if has_autism:
             performance_note = (
-                f"Session complete. "
-                f"Score: {score_pct}%. "
-                f"Correct answers: {summary['correct_answers']} "
-                f"out of {summary['total_questions']}. "
+                f"Session complete. Score: {score_pct}%. "
+                f"Correct answers: {summary['correct_answers']} out of {summary['total_questions']}. "
                 f"Understanding level: {understanding}."
             )
-
-        # ── Anxiety: remove score from the framing entirely ───────────────────
         elif has_anxiety:
             if understanding == "strong":
-                performance_note = (
-                    f"You clearly retained a lot from today's session on "
-                    f"{self.subject_name}."
-                )
+                performance_note = f"You clearly retained a lot from today's session on {self.subject_name}."
             elif understanding == "moderate":
-                performance_note = (
-                    f"You got some solid things from today's session. "
-                    f"A few areas are worth revisiting when you feel ready."
-                )
+                performance_note = f"You got some solid things from today's session. A few areas are worth revisiting when you feel ready."
             else:
-                performance_note = (
-                    f"This material is still settling in — that's completely "
-                    f"normal for new content and it means today's session was "
-                    f"still useful."
-                )
-            
-
-        # ── Everyone else: standard performance note with score ───────────────
+                performance_note = f"This material is still settling in — completely normal for new content."
         else:
             if understanding == "strong":
-                performance_note = (
-                    f"You scored {score_pct}% — solid retention of "
-                    f"{self.subject_name}."
-                )
+                performance_note = f"You scored {score_pct}% — solid retention of {self.subject_name}."
             elif understanding == "moderate":
-                performance_note = (
-                    f"You scored {score_pct}%. Good progress, with a few "
-                    f"areas worth revisiting."
-                )
+                performance_note = f"You scored {score_pct}%. Good progress, with a few areas worth revisiting."
             else:
-                performance_note = (
-                    f"You scored {score_pct}%. This material needs another "
-                    f"pass — completely expected at this stage."
-                )
-            
+                performance_note = f"You scored {score_pct}%. This material needs another pass — completely expected at this stage."
 
-        # ── Flashcard note — always define this before summary_message ───────────
-        flashcard_note = ""                          # ← always defined first
+        # ── Flashcard note ────────────────────────────────────────────────────
+        flashcard_note = ""
         if flashcards:
             due_date = flashcards[0].get("next_review_date", next_review)
             flashcard_note = (
@@ -516,8 +345,7 @@ class CheckInSession:
             )
 
         summary_message = (
-            f"{performance_note}"
-            f"{flashcard_note} "
+            f"{performance_note}{flashcard_note} "
             f"Next review of {self.subject_name} scheduled for {next_review}.\n\n"
             f"{encouragement}"
         )
@@ -525,11 +353,6 @@ class CheckInSession:
         return summary_message, summary
 
     def get_session_data(self) -> dict:
-        """
-        Return all session data for saving to Supabase.
-        Called after the session is complete.
-        """
-
         return {
             "user_profile":    self.user_profile,
             "subject_name":    self.subject_name,
